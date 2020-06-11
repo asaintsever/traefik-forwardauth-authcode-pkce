@@ -1,0 +1,119 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forwardauth-authcode-pkce
+  labels:
+    app: forwardauth-authcode-pkce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: forwardauth-authcode-pkce
+  template:
+    metadata:
+      labels:
+        app: forwardauth-authcode-pkce
+    spec:
+      containers:
+      - image: asaintsever/traefik-forwardauth-authcode-pkce
+        imagePullPolicy: IfNotPresent
+        name: forwardauth-authcode-pkce
+        env:
+          - name: APP_URL
+            value: "http://<Traefik LoadBalancer IP>/whoami/"
+          - name: AUTH_CALLBACK_URL
+            value: "http://<Traefik LoadBalancer IP>/auth/callback"
+          - name: OIDC_PROVIDER_URL
+            value: "<Your OIDC Provider here>"
+          - name: TRAEFIK_APP_CLIENT_ID
+            value: "<Your client id here>"
+        ports:
+          - name: authcode-pkce
+            containerPort: 3000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: forwardauth-authcode-pkce
+spec:
+  selector:
+    app: forwardauth-authcode-pkce
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: authcode-pkce
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: authcode-pkce-forwarder
+spec:
+  forwardAuth:
+    address: http://forwardauth-authcode-pkce/auth
+    trustForwardHeader: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: whoami
+spec:
+  selector:
+    app: whoami
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: whoami-port
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whoami
+  labels:
+    app: whoami
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: whoami
+  template:
+    metadata:
+      labels:
+        app: whoami
+    spec:
+      containers:
+      - image: containous/whoami
+        imagePullPolicy: IfNotPresent
+        name: whoami
+        ports:
+          - name: whoami-port
+            containerPort: 80
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: backend
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: PathPrefix(`/whoami`)
+    kind: Rule
+    services:
+    - name: whoami
+      port: 80
+    middlewares:
+    - name: authcode-pkce-forwarder
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: auth
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: PathPrefix(`/auth`)
+    kind: Rule
+    services:
+    - name: forwardauth-authcode-pkce
+      port: 80
